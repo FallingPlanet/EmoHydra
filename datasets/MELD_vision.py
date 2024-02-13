@@ -8,34 +8,43 @@ import torch
 # Initialize the feature extractor
 feature_extractor = ViTFeatureExtractor.from_pretrained('google/vit-base-patch16-224')
 
-csv_path = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\train_sent_emo.csv"
-video_directory = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\train_splits"
-output_directory = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\MELD_Vision_VIT"
+csv_path = r"F:\FP_multimodal\MELD\MELD.Raw\train\train_sent_emo.csv"
+video_directory = r"F:\FP_multimodal\MELD\MELD.Raw\train\train_splits"
+output_directory = r"F:\FP_multimodal\MELD\MELD.Raw\train\MELD_Vision_VIT"
 df = pd.read_csv(csv_path)
 
 # Create the output directory if it does not exist
 if not os.path.exists(output_directory):
     os.makedirs(output_directory)
 
-def preprocess_and_save(video_path, output_folder, frame_count):
+def preprocess_and_save(video_path, output_folder, frame_count=0):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_interval = max(1, int(fps / 2))  # Ensure at least 1 to avoid division by zero
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    processed_first_frame = False
 
     while True:
         ret, frame = cap.read()
+        current_frame_number = int(cap.get(1))  # Get the current frame number
+        
         if not ret:
             break
-        if int(cap.get(1)) % frame_interval == 0:
+
+        # Process the first frame regardless of the frame interval,
+        # then process subsequent frames based on the frame interval
+        if not processed_first_frame or current_frame_number % frame_interval == 0 or current_frame_number == total_frames:
             frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             inputs = feature_extractor(images=frame_pil, return_tensors="pt")["pixel_values"]
             
-            # Save the tensor and label
+            # Save the tensor
             tensor_save_path = os.path.join(output_folder, f"frame_{frame_count}.pt")
             torch.save(inputs, tensor_save_path)
             frame_count += 1
+            processed_first_frame = True
 
     cap.release()
+
 
 # Process videos and save preprocessed frames sequentially
 for idx, row in df.iterrows():

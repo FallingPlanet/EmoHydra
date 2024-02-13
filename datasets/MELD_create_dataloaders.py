@@ -1,93 +1,72 @@
 import torch
 from torch.utils.data import Dataset
 import os
-import pandas as pd
 import glob
-import json
 
 class MultimodalMELDDataset(Dataset):
     def __init__(self, base_dir, label_mapping, output_dir=None):
         self.base_dir = base_dir
         self.label_mapping = label_mapping
-        self.output_dir = output_dir  # Optional output directory for saving processed data
+        self.output_dir = output_dir
         self.sample_info = self._gather_samples_info()
 
     def _gather_samples_info(self):
-        """
-        Gathers information about samples by walking through the text data directory structure.
-        Constructs paths for vision and audio data based on the text data paths.
-        """
         samples = []
-        # Starting point is the text data directory
+        # Base directories for text, vision, and audio
         text_base_dir = os.path.join(self.base_dir, "MELD_Text")
-        
-        # Iterate over each emotion directory within the text data directory
+        vision_base_dir = os.path.join(self.base_dir, "MELD_Vision_VIT")
+        audio_base_dir = os.path.join(self.base_dir, "MELD_Speech")
+
         for emotion in os.listdir(text_base_dir):
             emotion_dir = os.path.join(text_base_dir, emotion)
             if not os.path.isdir(emotion_dir):
-                continue  # Skip if not a directory
+                continue
 
-            # Iterate over dialogue directories within each emotion directory
-            for dialogue in os.listdir(emotion_dir):
-                dialogue_dir = os.path.join(emotion_dir, dialogue)
-                if not os.path.isdir(dialogue_dir):
-                    continue  # Skip if not a directory
+            # Adjusted to directly iterate through .txt files representing utterances
+            for text_file in glob.glob(os.path.join(emotion_dir, "*.txt")):
+                file_parts = os.path.splitext(os.path.basename(text_file))[0].split('_')
+                dialogue_id = file_parts[0]  # e.g., "dia12"
+                utterance_id = file_parts[1]  # e.g., "utt2"
                 
-                # Iterate over utterance text files within each dialogue directory
-                for utterance_file in os.listdir(dialogue_dir):
-                    if utterance_file.endswith(".txt"):
-                        utterance_id = utterance_file.split('.')[0]  # Extract utterance identifier
-                        
-                        # Construct paths for corresponding vision and audio data
-                        vision_path = os.path.join(self.base_dir, "MELD_Vision_VIT", emotion, f"{dialogue}_{utterance_id}")
-                        vision_files = sorted(glob.glob(os.path.join(vision_path, "*.pt")))
-                        
-                        audio_path = os.path.join(self.base_dir, "MELD_Speech", emotion, f"{dialogue}_{utterance_id}", "mfcc_features.pt")
-                        
-                        # Check if vision and audio data exist for the utterance
-                        if not os.path.exists(audio_path) or not vision_files:
-                            continue  # Skip if corresponding vision or audio data is missing
-                        
-                        # Append sample information
-                        samples.append({
-                            'text_path': os.path.join(dialogue_dir, utterance_file),
-                            'vision_paths': vision_files,  # List of paths to vision frames
-                            'audio_path': audio_path,
-                            'label': self.label_mapping[emotion],
-                            'emotion': emotion,
-                            'dialogue': dialogue,
-                            'utterance_id': utterance_id
-                        })
-        return samples
+                # Construct paths for vision and audio files
+                vision_path = os.path.join(vision_base_dir, emotion, f"{dialogue_id}_{utterance_id}")
+                vision_files = sorted(glob.glob(os.path.join(vision_path, "*.pt")))
+                
+                audio_path = os.path.join(audio_base_dir, emotion, f"{dialogue_id}_{utterance_id}", "mfcc_features.pt")
+                
+                if os.path.exists(audio_path) and vision_files:
+                    samples.append({
+                        'text_path': text_file,
+                        'vision_paths': vision_files,
+                        'audio_path': audio_path,
+                        'label': self.label_mapping[emotion],
+                        'emotion': emotion,
+                        'dialogue': dialogue_id,
+                        'utterance_id': utterance_id
+                    })
+                else:
+                    print(f"Missing data for {dialogue_id}_{utterance_id} in emotion {emotion}")
 
+        return samples
 
     def __len__(self):
         return len(self.sample_info)
 
     def __getitem__(self, idx):
         sample_info = self.sample_info[idx]
-        emotion, dialogue, utterance = sample_info['emotion'], sample_info['dialogue'], sample_info['utterance']
-
-        # Load text data
-        text_path = os.path.join(self.base_dir, "MELD_Text", emotion, dialogue, f"{utterance}.txt")
-        with open(text_path, 'r', encoding='utf-8') as file:
+        with open(sample_info['text_path'], 'r', encoding='utf-8') as file:
             text_data = file.read()
-
-        # Load vision data (assuming averaging or selecting a specific frame is handled elsewhere)
-        vision_path = os.path.join(self.base_dir, "MELD_Vision_VIT", emotion, f"{dialogue}_{utterance}")
-        vision_frames = sorted(glob.glob(os.path.join(vision_path, "*.pt")))
-        vision_data = [torch.load(frame) for frame in vision_frames]
-
-        # Load audio data
-        audio_path = os.path.join(self.base_dir, "MELD_Speech", emotion, dialogue, f"{utterance}.pt")
-        audio_data = torch.load(audio_path)
-
+        vision_data = [torch.load(frame) for frame in sample_info['vision_paths']]
+        audio_data = torch.load(sample_info['audio_path'])
+        
         return {
             'text': text_data,
-            'vision': vision_data,  # This is a list of tensors; handling of multiple frames is model-dependent
+            'vision': vision_data,
             'audio': audio_data,
             'label': sample_info['label']
         }
+
+
     def save_processed_data(self, idx, processed_data):
         """Saves processed data (e.g., averaged vision frames) to output_dir."""
         if not self.output_dir:
@@ -114,6 +93,22 @@ unified_label_mapping = {
     "surprise": 7,
     "worry": 8  # "worry" might move to 8 if "disgust" is inserted before it
 }
-file_path = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train"
-output_dir = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\MELD_train"
+file_path = r"F:\FP_multimodal\MELD\MELD.Raw\train"
+output_dir = r"F:\FP_multimodal\MELD\MELD.RAW\train\MELD_train"
 MultimodalMELDDataset(base_dir=file_path,label_mapping=unified_label_mapping,output_dir=output_dir)
+
+# Instantiate the dataset
+dataset = MultimodalMELDDataset(base_dir=file_path, label_mapping=unified_label_mapping, output_dir=output_dir)
+
+for idx in range(len(dataset)):
+    sample = dataset[idx]  # Load the data
+    
+    # Define the output path for the entire sample
+    output_path = os.path.join(dataset.output_dir, f"sample_{idx}.pt")
+    
+    # Ensure the output directory exists
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    # Save the entire sample as a .pt file
+    torch.save(sample, output_path)
+    

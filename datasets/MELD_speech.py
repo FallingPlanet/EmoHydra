@@ -4,9 +4,9 @@ import pandas as pd
 import os
 import torch
 
-csv_path = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\train_sent_emo.csv"
-video_directory = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\train_splits"
-output_directory = r"F:\FP_multimodal\MELD\MELD-RAW\MELD.Raw\train\MELD_Speech"
+csv_path = r"F:\FP_multimodal\MELD\MELD.Raw\train\train_sent_emo.csv"
+video_directory = r"F:\FP_multimodal\MELD\MELD.Raw\train\train_splits"
+output_directory = r"F:\FP_multimodal\MELD\MELD.Raw\train\MELD_Speech"
 df = pd.read_csv(csv_path)
 
 # Create the output directory if it does not exist
