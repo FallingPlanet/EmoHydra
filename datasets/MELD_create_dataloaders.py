@@ -3,19 +3,20 @@ from torch.utils.data import Dataset
 import os
 import glob
 import logging
+from FallingPlanet.orbit.utils.Tokenizer import BertTiny_tokenize
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class MultimodalMELDDataset(Dataset):
-    def __init__(self, base_dir, label_mapping, output_dir=None):
+    def __init__(self, base_dir, label_mapping, output_dir=None, preprocess=True):
         self.base_dir = base_dir
         self.label_mapping = label_mapping
         self.output_dir = output_dir
+        self.preprocess = preprocess
         self.sample_info = self._gather_samples_info()
 
     def _gather_samples_info(self):
-      
         missing_data_count = {'text': 0, 'vision': 0, 'audio': 0, 'total': 0}
         samples = []
         # Base directories for text, vision, and audio
@@ -41,8 +42,25 @@ class MultimodalMELDDataset(Dataset):
                 audio_path = os.path.join(audio_base_dir, emotion, f"{dialogue_id}_{utterance_id}", "mfcc_features.pt")
                 
                 if os.path.exists(audio_path) and vision_files:
+                    if self.preprocess:
+                        # Preprocess and cache the text data
+                        text_cache_path = os.path.join(self.output_dir, emotion, dialogue_id, f"{utterance_id}.pt")
+                        os.makedirs(os.path.dirname(text_cache_path), exist_ok=True)
+                        if not os.path.exists(text_cache_path):
+                            with open(text_file, 'r', encoding='utf-8') as file:
+                                text_data = file.read()
+                            input_ids, attention_masks = BertTiny_tokenize(text_data, max_length=256)
+                            torch.save((input_ids, attention_masks), text_cache_path)
+                        else:
+                            input_ids, attention_masks = torch.load(text_cache_path)
+                    else:
+                        with open(text_file, 'r', encoding='utf-8') as file:
+                            text_data = file.read()
+                        input_ids, attention_masks = BertTiny_tokenize(text_data, max_length=256)
+
                     samples.append({
-                        'text_path': text_file,
+                        'text_input_ids': input_ids,
+                        'text_attention_masks': attention_masks,
                         'vision_paths': vision_files,
                         'audio_path': audio_path,
                         'label': self.label_mapping[emotion],
@@ -51,7 +69,6 @@ class MultimodalMELDDataset(Dataset):
                         'utterance_id': utterance_id
                     })
                 else:
-                
                     missing_data_count['total'] += 1
                     if not os.path.exists(audio_path): missing_data_count['audio'] += 1
                     if not vision_files: missing_data_count['vision'] += 1
@@ -61,24 +78,22 @@ class MultimodalMELDDataset(Dataset):
 
         return samples
 
-       
     def __len__(self):
         return len(self.sample_info)
 
     def __getitem__(self, idx):
         sample_info = self.sample_info[idx]
-        with open(sample_info['text_path'], 'r', encoding='utf-8') as file:
-            text_data = file.read()
+        text_input_ids = sample_info['text_input_ids']
+        text_attention_masks = sample_info['text_attention_masks']
         vision_data = [torch.load(frame) for frame in sample_info['vision_paths']]
         audio_data = torch.load(sample_info['audio_path'])
         
         return {
-            'text': text_data,
+            'text': (text_input_ids, text_attention_masks),
             'vision': vision_data,
             'audio': audio_data,
             'label': sample_info['label']
         }
-
 
     def save_processed_data(self, idx, processed_data):
         """Saves processed data (e.g., averaged vision frames) to output_dir."""
