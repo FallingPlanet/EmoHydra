@@ -88,11 +88,34 @@ class MultimodalClassifier:
 
 
 # Example usage remains largely the same, but now it's prepared for distributed training
+unified_label_mapping = {
+    "anger": 0,
+    "disgust": 1,  # Assuming "disgust" is added here if we're following alphabetical order
+    "fear": 2,
+    "joy": 3,
+    "love": 4,
+    "neutral": 5,
+    "sadness": 6,
+    "surprise": 7,
+    "worry": 8  # "worry" might move to 8 if "disgust" is inserted before it
+}
+speech_dict = r"E:\model_saves\EmoSpeak_Transformer_Tiny.pt"
+vision_dict = r"D:\Users\WillR\Documents\GitHub\EmoVision\EmoVision_augmented-tiny.pth"
+text_dict = r"D:\Users\WillR\Documents\GitHub\EmoBERTv2\EmoBERTv2-tiny.pth"
 
-speech_dict = "E:\model_saves\EmoSpeak_Transformer_Tiny.pt"
-vision_dict = "D:\Users\WillR\Documents\GitHub\EmoVision\EmoVision_augmented-tiny.pth"
-text_dict = "D:\Users\WillR\Documents\GitHub\EmoBERTv2\EmoBERTv2-tiny.pth"
-# Example usage:
-# Assuming unified_label_mapping and dataset are already defined
-classifier = MultimodalClassifier(dataset=dataset, num_classes=len(unified_label_mapping),text_state_dict=text_dict,speech_dict=speech_dict,vision_state_dict=vision_dict)
-classifier.train(epochs=10)
+from torch.utils.data import random_split
+dataset = r"F:\FP_multimodal\MELD\MELD-RAW\train\MELD_train"
+# Define the proportions for your splits
+train_size = int(0.7 * len(dataset))  # 70% of the dataset for training
+val_size = int(0.15 * len(dataset))  # 15% for validation
+test_size = len(dataset) - train_size - val_size  # Remaining 15% for testing
+
+# Set the seed for reproducibility
+torch.manual_seed(42)
+
+# Perform the split
+train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
+
+# Now you can pass these datasets to your classifier
+classifier = MultimodalClassifier(train_dataset=train_dataset, val_dataset=val_dataset, test_dataset=test_dataset, num_classes=len(unified_label_mapping), text_state_dict=text_dict, vision_state_dict=vision_dict, audio_state_dict=speech_dict)
+

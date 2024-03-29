@@ -2,6 +2,10 @@ import torch
 from torch.utils.data import Dataset
 import os
 import glob
+import logging
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class MultimodalMELDDataset(Dataset):
     def __init__(self, base_dir, label_mapping, output_dir=None):
@@ -11,6 +15,8 @@ class MultimodalMELDDataset(Dataset):
         self.sample_info = self._gather_samples_info()
 
     def _gather_samples_info(self):
+      
+        missing_data_count = {'text': 0, 'vision': 0, 'audio': 0, 'total': 0}
         samples = []
         # Base directories for text, vision, and audio
         text_base_dir = os.path.join(self.base_dir, "MELD_Text")
@@ -45,10 +51,17 @@ class MultimodalMELDDataset(Dataset):
                         'utterance_id': utterance_id
                     })
                 else:
-                    print(f"Missing data for {dialogue_id}_{utterance_id} in emotion {emotion}")
+                
+                    missing_data_count['total'] += 1
+                    if not os.path.exists(audio_path): missing_data_count['audio'] += 1
+                    if not vision_files: missing_data_count['vision'] += 1
+                    logging.warning(f"Missing data for {dialogue_id}_{utterance_id} in emotion {emotion}. Missing types: {'audio' if not os.path.exists(audio_path) else ''} {'vision' if not vision_files else ''}")
+
+        logging.info(f"Total missing samples: {missing_data_count['total']}. Details - Audio: {missing_data_count['audio']}, Vision: {missing_data_count['vision']}")
 
         return samples
 
+       
     def __len__(self):
         return len(self.sample_info)
 
