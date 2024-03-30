@@ -122,7 +122,7 @@ unified_label_mapping = {
     "worry": 8  # "worry" might move to 8 if "disgust" is inserted before it
 }
 file_path = r"F:\FP_multimodal\MELD\MELD.Raw\train"
-output_dir = r"F:\FP_multimodal\MELD\MELD.RAW\train\MELD_train"
+output_dir = r"F:\FP_multimodal\MELD\MELD_RAW\train\MELD_train"
 MultimodalMELDDataset(base_dir=file_path,label_mapping=unified_label_mapping,output_dir=output_dir)
 
 # Instantiate the dataset
