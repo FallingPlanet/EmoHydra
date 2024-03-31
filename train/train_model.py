@@ -16,7 +16,7 @@ class MultimodalClassifier:
         self.accelerator = Accelerator()
 
         # Initialize the model with state dictionaries for each modality
-        self.model = HydraTiny(num_classes=num_classes, feature_dim=30, requires_grad=False,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
+        self.model = HydraTiny(num_classes=num_classes, feature_dim=30, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
         self.model.load_modal_state_dicts(text_dict=text_state_dict, audio_dict=audio_state_dict, vision_dict=vision_state_dict)
         self.loss_function = CrossEntropyLoss()
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
@@ -150,6 +150,15 @@ class MultimodalClassifier:
         if self.accelerator.is_local_main_process:
             print("Training completed. Here are the final metrics:")
             print(self.metrics.compute())
+            
+    def save_model(self, save_path):
+    
+        model_state_dict = self.model.state_dict()
+        torch.save(model_state_dict, save_path)
+        if self.accelerator.is_local_main_process:
+            print(f"Model saved to {save_path}")
+
+        
 
 
 
@@ -261,3 +270,4 @@ classifier = MultimodalClassifier(train_dataset=train_dataset,
                                   unified_label_map = unified_label_mapping)
 
 classifier.train(epochs=10)
+classifier.save_model("EmoHydra-10e-170p-MELD")

@@ -42,6 +42,7 @@ class ChimeraInferencePipeline:
         self.audio_label_map = audio_label_map
         self.unified_label_map = unified_label_map
 
+
     def infer(self, batch):
         text_inputs = {'input_ids': batch['text'][0].to(device), 'attention_mask': batch['text'][1].to(device)}
         vision_inputs = [v.to(device) for v in batch['vision']]
@@ -60,7 +61,7 @@ class ChimeraInferencePipeline:
 
         # Model inference
         text_logits = self.text_model(**text_inputs)
-        vision_logits_batch = self.vision_model(vision_inputs)
+        vision_logits_batch = self.vision_model(vision_inputs.to(device))  # Move vision_inputs to GPU
         audio_logits = self.audio_model(audio_inputs)
         
         # Average vision logits across the batch
@@ -106,41 +107,74 @@ class ChimeraInferencePipeline:
 
         # Function to expand logits tensor to have `max_classes` classes
         def expand_logits(logits, target_size):
-           
+        
             if logits.size(1) < target_size:
                 diff = target_size - logits.size(1)
                 # Assuming logits are on CPU for simplicity; adapt as necessary for GPU tensors
-                padding = torch.zeros(logits.size(0), diff)
-                logits = torch.cat([logits, padding], dim=1)
-               
+                padding = torch.zeros(logits.size(0), diff).to(device)
+                logits = torch.cat([logits, padding], dim=1).to(device)
+            
             return logits
 
         # Expand each logits tensor to the same size
         text_logits = expand_logits(text_logits, max_classes)
-        vision_logits = expand_logits(vision_logits, max_classes)
+        vision_logits = expand_logits(vision_logits.to(device), max_classes)  # Move vision_logits to GPU
         audio_logits = expand_logits(audio_logits, max_classes)
 
         # Now that all logits tensors have the same size, we can safely average them
         fused_output = (text_logits + vision_logits + audio_logits) / 3
         return fused_output
 
+import torch
+from torchmetrics import Accuracy, Precision, Recall, F1Score
+
+from torchmetrics import Accuracy, Precision, Recall, F1Score, MatthewsCorrCoef
+
 class GPUMetricsWrapper:
-    def __init__(self):
-        self.correct_predictions = 0
-        self.total_predictions = 0
+    def __init__(self, num_classes, device):
+        self.device = device
+        # Existing metrics
+        self.accuracy = Accuracy(top_k=1, task='multiclass', num_classes=num_classes).to(device)
+        self.top2_accuracy = Accuracy(top_k=2, task='multiclass', num_classes=num_classes).to(device)
+        self.precision = Precision(num_classes=num_classes, average='macro', task='multiclass').to(device)
+        self.recall = Recall(num_classes=num_classes, average='macro', task='multiclass').to(device)
+        self.f1_score = F1Score(num_classes=num_classes, average='macro', task='multiclass').to(device)
+        # New metrics
+        self.mcc = MatthewsCorrCoef(num_classes=num_classes,task ='multiclass').to(device)
+        self.weighted_f1_score = F1Score(num_classes=num_classes, average='weighted', task='multiclass').to(device)
 
     def update(self, outputs, labels):
-        _, preds = torch.max(outputs, dim=1)
-        self.correct_predictions += (preds == labels).sum().item()
-        self.total_predictions += labels.size(0)
+        # Update metrics
+        self.accuracy(outputs, labels)
+        self.top2_accuracy(outputs, labels)
+        self.precision(outputs, labels)
+        self.recall(outputs, labels)
+        self.f1_score(outputs, labels)
+        self.mcc(outputs, labels)
+        self.weighted_f1_score(outputs, labels)
 
     def compute(self):
-        accuracy = self.correct_predictions / self.total_predictions
-        return {"accuracy": accuracy}
+        # Compute and return metrics
+        return {
+            "accuracy": self.accuracy.compute().item(),
+            "top2_accuracy": self.top2_accuracy.compute().item(),
+            "precision": self.precision.compute().item(),
+            "recall": self.recall.compute().item(),
+            "f1_score": self.f1_score.compute().item(),
+            "mcc": self.mcc.compute().item(),
+            "weighted_f1_score": self.weighted_f1_score.compute().item()
+        }
 
     def reset(self):
-        self.correct_predictions = 0
-        self.total_predictions = 0
+        # Reset metrics
+        self.accuracy.reset()
+        self.top2_accuracy.reset()
+        self.precision.reset()
+        self.recall.reset()
+        self.f1_score.reset()
+        self.mcc.reset()
+        self.weighted_f1_score.reset()
+
 
 speech_dict = r"E:\model_saves\EmoSpeak_Transformer_Tinier.pt"
 vision_dict = r"D:\Users\WillR\Documents\GitHub\EmoVision\EmoVision_augmented-tiny.pth"
@@ -269,12 +303,9 @@ pipeline = ChimeraInferencePipeline(
 )
 
 
-correct_predictions = 0
-top2_predictions = 0
-total_predictions = 0
 
 # Initialize the metrics wrapper
-metrics_wrapper = GPUMetricsWrapper()
+metrics_wrapper = GPUMetricsWrapper(num_classes=9,device=device)
 
 # Ensure your DataLoader, models, and tensors are all set to use the GPU as shown earlier
 
