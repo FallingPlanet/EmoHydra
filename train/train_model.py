@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
-from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny
+from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny, HydraTinyRefactored
 from FallingPlanet.orbit.models.multimodal.Chimera import Chimera
 from torch.optim import AdamW
 from torch.nn import CrossEntropyLoss
@@ -16,7 +16,7 @@ class MultimodalClassifier:
         self.accelerator = Accelerator()
 
         # Initialize the model with state dictionaries for each modality
-        self.model = HydraTiny(num_classes=num_classes, feature_dim=30, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
+        self.model = HydraTinyRefactored(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map)
         self.model.load_modal_state_dicts(text_dict=text_state_dict, audio_dict=audio_state_dict, vision_dict=vision_state_dict)
         self.loss_function = CrossEntropyLoss()
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
