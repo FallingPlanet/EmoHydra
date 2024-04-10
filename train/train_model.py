@@ -14,13 +14,14 @@ import os
 class MultimodalClassifier:
     def __init__(self, train_dataset: Dataset, val_dataset: Dataset, test_dataset: Dataset, num_classes: int, batch_size: int = 1, learning_rate: float = 0.001, text_state_dict: str = "", vision_state_dict: str = "", audio_state_dict: str = "", mode: str = 'macro', vision_label_map: dict = None, text_label_map: dict = None, audio_label_map: dict = None,unified_label_map: dict = None):
         self.accelerator = Accelerator()
-
+        self.unified_label_map = unified_label_map
+        self.num_classes = num_classes
         # Initialize the model with state dictionaries for each modality
         self.model = HydraTinyRefactored(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map)
         self.model.load_modal_state_dicts(text_dict=text_state_dict, audio_dict=audio_state_dict, vision_dict=vision_state_dict)
-        self.loss_function = CrossEntropyLoss()
+        self.loss_function = CrossEntropyLoss(ignore_index=-1)
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
-
+        self.DEFAULT_CLASS_INDEX = num_classes - 1
         self.train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=self.custom_collate_fn)
         self.val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=self.custom_collate_fn)
         self.test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,collate_fn=self.custom_collate_fn)
@@ -33,15 +34,33 @@ class MultimodalClassifier:
 
     def train_epoch(self):
         self.model.train()
+         # Assuming your model has a 'device' attribute
         running_loss = 0.0
         self.epoch_metrics.reset()
 
         for batch_idx, sample in enumerate(tqdm(self.train_loader, desc="Training", position=0, leave=True)):
             input_ids, attention_masks, vision_data, audio_data, labels = self.prepare_data(sample)
             text_data = (input_ids, attention_masks)
+            
+           
+            # This assumes your samples are dictionaries with a 'label' key
 
+            
+            
+            
             self.optimizer.zero_grad()
-            outputs, vision_labels, text_labels, audio_labels = self.model(vision_data, text_data, audio_data)
+            outputs = self.model(vision_data, text_data, audio_data)
+            reversed_label_map = {v: k for k, v in self.unified_label_map.items()}
+            
+            # Assuming self.unified_label_map and DEFAULT_CLASS_INDEX are properly set
+            # Assuming 'num_classes' is defined and represents the total number of valid classes
+            DEFAULT_CLASS_INDEX = self.num_classes - 1  # Last valid index for 'unknown' or default class
+
+            # Correctly apply unified_label_map to transform labels
+           
+
+    
+            
             loss = self.loss_function(outputs, labels)
             self.accelerator.backward(loss)
             self.optimizer.step()
@@ -56,6 +75,7 @@ class MultimodalClassifier:
         self.epoch_metrics.reset()
 
         return avg_loss, epoch_metrics
+
 
 
 
@@ -81,6 +101,8 @@ class MultimodalClassifier:
             'audio': audio_batch,
             'label': torch.tensor(labels)
         }
+        
+        
     def run_evaluation(self, data_loader):
         self.model.eval()
         total_loss = 0.0
@@ -270,4 +292,4 @@ classifier = MultimodalClassifier(train_dataset=train_dataset,
                                   unified_label_map = unified_label_mapping)
 
 classifier.train(epochs=10)
-classifier.save_model("EmoHydra-10e-170p-MELD")
+classifier.save_model("EmoHydra-MMA-Attention-MELD")
