@@ -38,7 +38,7 @@ class MultimodalClassifier:
         running_loss = 0.0
         self.epoch_metrics.reset()
 
-        for batch_idx, sample in enumerate(tqdm(self.train_loader, desc="Training", position=0, leave=True)):
+        for batch_idx, sample in enumerate(tqdm(self.val_loader, desc="Training", position=0, leave=True)):
             input_ids, attention_masks, vision_data, audio_data, labels = self.prepare_data(sample)
             text_data = (input_ids, attention_masks)
             
@@ -68,7 +68,7 @@ class MultimodalClassifier:
             running_loss += loss.item()
             self.epoch_metrics.update(outputs.detach(), labels)
 
-        avg_loss = running_loss / len(self.train_loader)
+        avg_loss = running_loss / len(self.val_loader)
         epoch_metrics = self.epoch_metrics.compute_epoch_metrics()
         if self.accelerator.is_local_main_process:
             tqdm.write(f"Training Loss: {avg_loss:.4f}, Epoch Metrics: {epoch_metrics}")
@@ -112,7 +112,7 @@ class MultimodalClassifier:
             input_ids, attention_masks, vision_data, audio_data, labels = self.prepare_data(sample)
             text_data = (input_ids, attention_masks)
 
-            outputs, vision_labels, text_labels, audio_labels = self.model(vision_data, text_data, audio_data)
+            outputs = self.model(vision_data, text_data, audio_data)
             loss = self.loss_function(outputs, labels)
 
             total_loss += loss.item()
