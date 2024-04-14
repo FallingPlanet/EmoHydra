@@ -1,9 +1,9 @@
 import cv2
 import torch
 import sounddevice as sd
-from transformers import pipeline, BertTokenizer, ViTFeatureExtractor, ViTModel
+from transformers import pipeline, BertTokenizerFast, ViTFeatureExtractor, ViTModel
 from pathlib import Path
-from FallingPlanet.orbit.models.multimodal.Hydra import HydraTinyRefactored
+from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny
 speech_dict = r"E:\model_saves\EmoSpeak_Transformer_Tinier.pt"
 vision_dict = r"D:\Users\WillR\Documents\GitHub\EmoVision\EmoVision_augmented-tiny.pth"
 text_dict = r"D:\Users\WillR\Documents\GitHub\EmoBERTv2\EmoBERTv2-tiny.pth"
@@ -61,47 +61,66 @@ audio_label_mapping = {
     "Surprise": 6
 }
 
-# Initialize the model
-model_path = Path("path_to_trained_model.pth")
-num_classes = len(unified_label_mapping)
-model =HydraTinyRefactored(num_classes=num_classes, requires_grad=False,text_label_map=text_label_mapping,audio_label_map=audio_label_mapping,vision_label_map=vision_label_mapping,unified_label_map=unified_label_mapping)
-model.load_state_dict(torch.load(model_path))
-
-# Load BERT tokenizer and ViT feature extractor
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+import cv2
+import torch
+import sounddevice as sd
+import numpy as np
+from transformers import BertTokenizer, ViTFeatureExtractor
+from yolov5 import YOLOv5
+from pathlib import Path
+from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny
+import librosa
+# Load the pre-trained models and components
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+yolo_model = YOLOv5(r"D:\Users\WillR\Documents\GitHub\EmoHydra\yolov5s.pt")
 feature_extractor = ViTFeatureExtractor.from_pretrained('google/vit-base-patch16-224')
-vit_model = ViTModel.from_pretrained('google/vit-base-patch16-224')
-
-# Initialize speech recognition
+tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 whisper_processor = pipeline("automatic-speech-recognition", model="openai/whisper-small")
 
-def capture_and_process_audio(duration=1, samplerate=16000):
+# Initialize and load the multimodal model
+
+
+model = HydraTiny(num_classes=9, requires_grad=False,text_label_map=text_label_mapping,audio_label_map=audio_label_mapping,vision_label_map=vision_label_mapping,unified_label_map=unified_label_mapping,mode="concat").to(device)
+model.load_modal_state_dicts(text_dict=text_dict, audio_dict=speech_dict, vision_dict=vision_dict)
+
+def capture_and_process_audio(duration=.30, samplerate=16000):
+    # Record the audio
     audio = sd.rec(int(samplerate * duration), samplerate=samplerate, channels=1, dtype='float32')
-    sd.wait()
+    sd.wait()  # Wait for the recording to finish
+    audio = audio.squeeze()  # Ensure it's mono
+
+    # Generate MFCCs
+    mfccs = librosa.feature.mfcc(y=audio, sr=samplerate, n_mfcc=30, n_fft=2048, hop_length=512, win_length=1024)
+    mfccs_tensor = torch.tensor(mfccs).unsqueeze(0).unsqueeze(0).float()  # Add a batch dimension
+
+    # Transcription using Whisper
     transcribed_text = whisper_processor(audio)["text"]
     inputs = tokenizer(transcribed_text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    return inputs['input_ids'], inputs['attention_mask']
+    input_ids, attention_mask = inputs['input_ids'].to(device), inputs['attention_mask'].to(device)
 
-def capture_and_process_video():
-    cap = cv2.VideoCapture(0)
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    return (input_ids, attention_mask), mfccs_tensor.to(device), transcribed_text
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
-        for (x, y, w, h) in faces:
-            face = frame[y:y+h, x:x+w]
+def process_video_frame(frame):
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = yolo_model.predict(frame_rgb)
+    detections = results.pandas().xyxy[0]  # Extract predictions
+
+    vision_features = []
+    for index, det in detections.iterrows():
+        if det['class'] == 0:  # Assuming class 0 is 'person', adjust as needed
+            x1, y1, x2, y2 = int(det['xmin']), int(det['ymin']), int(det['xmax']), int(det['ymax'])
+            face = frame_rgb[y1:y2, x1:x2]
+            face = cv2.resize(face, (224, 224))  # Resize to match ViT input size
             inputs = feature_extractor(images=face, return_tensors="pt")
-            outputs = vit_model(**inputs)
-            vision_features = outputs.last_hidden_state
-            return vision_features
+            vision_features.append(inputs['pixel_values'].squeeze(0).to(device))
 
-    cap.release()
-    return None
+    if vision_features:
+        vision_features = torch.stack(vision_features)  # Stack features if multiple faces
+    return vision_features
+
+import cv2
+import numpy as np
 
 def real_time_processing(model):
     cap = cv2.VideoCapture(0)  # Start video capture
@@ -111,17 +130,30 @@ def real_time_processing(model):
         if not ret:
             break
 
-        vision_features = process_frame(frame)  # Process video frame
-        input_ids, attention_mask = capture_and_process_audio()  # Process audio and transcribe text
-        audio_features = None  # Placeholder for audio feature extraction
+        vision_features = process_video_frame(frame)
+        (input_ids, attention_mask), audio_features, transcription = capture_and_process_audio()
 
-        # Check if all modalities are available
-        if vision_features is not None and audio_features is not None:
-            # Model prediction
-            probabilities = model(input_ids, attention_mask, vision_features, audio_features)
+        if vision_features is not None:
+            probabilities = model((input_ids, attention_mask), vision_features, audio_features)
             print("Predicted probabilities:", probabilities)
+            print("Transcription:", transcription)  # Now using the returned transcription
+            
+            # Visualize the highest probability predictions and bounding boxes
+            results = yolo_model.predict(frame)
+            for det in results.xyxy[0]:
+                xmin, ymin, xmax, ymax, conf, cls = int(det[0]), int(det[1]), int(det[2]), int(det[3]), det[4], det[5]
+                if int(cls) in vision_label_mapping:
+                    label = f'{vision_label_mapping[int(cls)]}: {conf:.2f}'
+                    cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (255, 0, 0), 2)
+                    cv2.putText(frame, label, (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+        # Display the frame
+        cv2.imshow("Camera Output", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
     cap.release()
-
-# Load the model and run the real-time processing
+    cv2.destroyAllWindows()
+    
 real_time_processing(model)
+

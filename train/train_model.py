@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
-from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny, HydraTinyRefactored
+from FallingPlanet.orbit.models.multimodal.Hydra import HydraTiny
 from FallingPlanet.orbit.models.multimodal.Chimera import Chimera
 from torch.optim import AdamW
 from torch.nn import CrossEntropyLoss
@@ -17,7 +17,7 @@ class MultimodalClassifier:
         self.unified_label_map = unified_label_map
         self.num_classes = num_classes
         # Initialize the model with state dictionaries for each modality
-        self.model = HydraTinyRefactored(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
+        self.model = HydraTiny(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
         self.model.load_modal_state_dicts(text_dict=text_state_dict, audio_dict=audio_state_dict, vision_dict=vision_state_dict)
         self.loss_function = CrossEntropyLoss(ignore_index=-1)
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
@@ -41,6 +41,8 @@ class MultimodalClassifier:
             # Assuming your custom collate function packs each batch correctly
             text_inputs,vision_inputs, audio_inputs, labels = self.prepare_data(batch)
             
+            print(f"Debug - Before MultiModalAttention call, vision_features shape: {len(vision_inputs)}")
+            print(f"Debug - Before MultiModalAttention call, audio_features shape: {audio_inputs.shape}")
             # Forward pass
             outputs = self.model(text_inputs,vision_inputs, audio_inputs)
             
