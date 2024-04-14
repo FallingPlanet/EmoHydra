@@ -15,6 +15,9 @@ from FallingPlanet.orbit.models import BertFineTuneTiny
 from FallingPlanet.orbit.models import DeitFineTuneTiny
 from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MatthewsCorrCoef
+from torch.nn.functional import softmax
+
+import torch.nn.functional as F
 
 if torch.cuda.is_available():
     print("CUDA is available. Proceeding with GPU support.")
@@ -55,7 +58,7 @@ class ChimeraInferencePipeline:
         # Convert list of vision input tensors to a batched tensor
         vision_inputs = torch.stack(vision_inputs)  # Stack the inputs
         vision_inputs = vision_inputs.squeeze(1).squeeze(1)
-        vision_inputs.to(device)
+        vision_inputs.to(device) 
         
         # Model inference
         text_logits = self.text_model(**text_inputs)
@@ -67,7 +70,7 @@ class ChimeraInferencePipeline:
         print(f"Text logits: {text_logits}")
         print(f"Vision logits batch: {vision_logits_batch}")
         print(f"Audio logits: {audio_logits}")
-
+        
         # Average vision logits across the batch if necessary
         vision_logits_avg = vision_logits_batch.mean(dim=0, keepdim=True)
 
@@ -165,23 +168,25 @@ class ChimeraInferencePipeline:
         def expand_logits(logits, target_size):
             if logits.size(1) < target_size:
                 diff = target_size - logits.size(1)
-                padding = torch.zeros(logits.size(0), diff).to(device)
-                logits = torch.cat([logits, padding], dim=1).to(device)
+                padding = torch.zeros(logits.size(0), diff, device=logits.device)
+                logits = torch.cat([logits, padding], dim=1)
             return logits
 
         # Expand each logits tensor to the same size
         text_logits_expanded = expand_logits(text_logits, max_classes)
-        vision_logits_expanded = expand_logits(vision_logits.to(device), max_classes)
+        vision_logits_expanded = expand_logits(vision_logits, max_classes)
         audio_logits_expanded = expand_logits(audio_logits, max_classes)
 
-        
+        # Convert expanded logits to probabilities using Softmax
+        text_probs = F.softmax(text_logits_expanded, dim=1)
+        vision_probs = F.softmax(vision_logits_expanded, dim=1)
+        audio_probs = F.softmax(audio_logits_expanded, dim=1)
 
-        # Now that all logits tensors have the same size, we can safely average them
-        fused_output = (text_logits_expanded + vision_logits_expanded + audio_logits_expanded) / 3
+        # Now that all logits tensors are converted to probabilities and have the same size,
+        # we can safely average them to get the fused probabilities
+        fused_probs = (text_probs + vision_probs + audio_probs) / 3
 
-        
-
-        return fused_output
+        return fused_probs
 
 
 
@@ -396,6 +401,7 @@ for batch_idx, batch in enumerate(inference_loader):
 
 # Compute and display metrics
 metrics_results = metrics_wrapper.compute()
+
 print("Evaluation Results:", metrics_results)
 
 # Reset for next evaluation, if necessary

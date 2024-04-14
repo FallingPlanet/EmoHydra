@@ -17,7 +17,7 @@ class MultimodalClassifier:
         self.unified_label_map = unified_label_map
         self.num_classes = num_classes
         # Initialize the model with state dictionaries for each modality
-        self.model = HydraTinyRefactored(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map)
+        self.model = HydraTinyRefactored(num_classes=num_classes, requires_grad=True,text_label_map=text_label_map,audio_label_map=audio_label_map,vision_label_map=vision_label_map,unified_label_map=unified_label_mapping)
         self.model.load_modal_state_dicts(text_dict=text_state_dict, audio_dict=audio_state_dict, vision_dict=vision_state_dict)
         self.loss_function = CrossEntropyLoss(ignore_index=-1)
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
@@ -34,47 +34,29 @@ class MultimodalClassifier:
 
     def train_epoch(self):
         self.model.train()
-         # Assuming your model has a 'device' attribute
-        running_loss = 0.0
-        self.epoch_metrics.reset()
-
-        for batch_idx, sample in enumerate(tqdm(self.val_loader, desc="Training", position=0, leave=True)):
-            input_ids, attention_masks, vision_data, audio_data, labels = self.prepare_data(sample)
-            text_data = (input_ids, attention_masks)
-            
-           
-            # This assumes your samples are dictionaries with a 'label' key
-
-            
-            
-            
+        total_loss = 0.0
+        for batch in self.train_loader:
             self.optimizer.zero_grad()
-            outputs = self.model(vision_data, text_data, audio_data)
-            reversed_label_map = {v: k for k, v in self.unified_label_map.items()}
             
-            # Assuming self.unified_label_map and DEFAULT_CLASS_INDEX are properly set
-            # Assuming 'num_classes' is defined and represents the total number of valid classes
-            DEFAULT_CLASS_INDEX = self.num_classes - 1  # Last valid index for 'unknown' or default class
-
-            # Correctly apply unified_label_map to transform labels
-           
-
-    
+            # Assuming your custom collate function packs each batch correctly
+            text_inputs,vision_inputs, audio_inputs, labels = self.prepare_data(batch)
             
+            # Forward pass
+            outputs = self.model(text_inputs,vision_inputs, audio_inputs)
+            
+            # Compute loss
             loss = self.loss_function(outputs, labels)
+            
+            # Backward and optimize
             self.accelerator.backward(loss)
             self.optimizer.step()
+            
+            total_loss += loss.item()
+        
+        average_loss = total_loss / len(self.train_loader)
+        print(f"Training loss: {average_loss:.4f}")
 
-            running_loss += loss.item()
-            self.epoch_metrics.update(outputs.detach(), labels)
 
-        avg_loss = running_loss / len(self.val_loader)
-        epoch_metrics = self.epoch_metrics.compute_epoch_metrics()
-        if self.accelerator.is_local_main_process:
-            tqdm.write(f"Training Loss: {avg_loss:.4f}, Epoch Metrics: {epoch_metrics}")
-        self.epoch_metrics.reset()
-
-        return avg_loss, epoch_metrics
 
 
 
@@ -158,20 +140,21 @@ class MultimodalClassifier:
         prepared_input_ids, prepared_attention_masks, prepared_vision_data, prepared_audio_data, prepared_labels = \
             self.accelerator.prepare(input_ids, attention_masks, vision_data, audio_data, labels)
 
-        return prepared_input_ids, prepared_attention_masks, prepared_vision_data, prepared_audio_data, prepared_labels
+        return (prepared_input_ids, prepared_attention_masks), prepared_vision_data, prepared_audio_data, prepared_labels
 
 
     def train(self, epochs: int):
         for epoch in range(epochs):
             if self.accelerator.is_local_main_process:
                 print(f"Epoch {epoch+1}/{epochs}")
-            self.train_epoch()
-            self.validate()
-        self.test()
-        self.metrics.reset()
+            self.train_epoch()  # Adjusted to no longer require arguments
+            avg_loss, epoch_metrics = self.validate()
+            print(f"Validation Loss: {avg_loss:.4f}, Validation Metrics: {epoch_metrics}")
+        avg_loss, epoch_metrics = self.test()  # This also should be captured
+        print(f"Test Loss: {avg_loss:.4f}, Test Metrics: {epoch_metrics}")
+        # You may want to reset and display final metrics after the test
         if self.accelerator.is_local_main_process:
-            print("Training completed. Here are the final metrics:")
-            print(self.metrics.compute())
+            print("Training completed.")
             
     def save_model(self, save_path):
     
@@ -189,19 +172,20 @@ vision_dict = r"D:\Users\WillR\Documents\GitHub\EmoVision\EmoVision_augmented-ti
 text_dict = r"D:\Users\WillR\Documents\GitHub\EmoBERTv2\EmoBERTv2-tiny.pth"
 
 unified_label_mapping = {
-    "anger": 0,
-    "angry": 0,
-    "disgust": 1,  # Assuming "disgust" is added here if we're following alphabetical order
-    "fear": 2,
-    "joy": 3,
-    "happy": 3,
-    "love": 4,
-    "neutral": 5,
-    "sadness": 6,
-    "sad": 6,
-    "surprise": 7,
-    "worry": 8  # "worry" might move to 8 if "disgust" is inserted before it
+    "anger": 0, "Anger": 0,
+    "angry": 0, "Angry": 0,
+    "disgust": 1, "Disgust": 1,
+    "fear": 2, "Fear": 2, "Fearful": 2,"fearful": 2,
+    "joy": 3, "Joy": 3,
+    "happy": 3, "Happy": 3,
+    "love": 4, "Love": 4,
+    "neutral": 5, "Neutral": 5,"Calm": 5, "calm": 5, "Boredom": 5, "boredom": 5,
+    "sadness": 6, "Sadness": 6,
+    "sad": 6, "Sad": 6,
+    "surprise": 7, "Surprise": 7,
+    "worry": 8, "Worry": 8
 }
+
 # Adjusted unified label mapping to include all emotions
 text_label_mapping = {
     "anger": 0,
@@ -219,17 +203,25 @@ text_label_mapping = {
 }
 
 # Speech model dictionary to unified label mapping, with a comprehensive approach
-speech_to_unified = {
-    "Neutral": unified_label_mapping["neutral"],
-    "Calm": unified_label_mapping["neutral"],
-    "Boredom": unified_label_mapping["neutral"],
-    "Happy": unified_label_mapping["joy"],
-    "Sad": unified_label_mapping["sadness"],
-    "Angry": unified_label_mapping["anger"],
-    "Fearful": unified_label_mapping["fear"],
-    "Disgust": unified_label_mapping["disgust"],
-    "Surprise": unified_label_mapping["surprise"],
-    # "Love" and "Worry" do not have direct counterparts in this example but could be handled in the model or preprocessing
+vision_label_mapping = {
+    "angry": 0,
+    "disgust": 1,
+    "fear": 2,
+    "happy": 3,
+    "neutral": 4,
+    "sad": 5,
+    "surprise": 6
+}
+speech_label_mapping = {
+    "Neutral": 0,
+    "Calm": 0,
+    "Boredom": 0,
+    "Happy": 1,
+    "Sad": 2,
+    "Angry": 3,
+    "Fearful": 4,
+    "Disgust": 5,
+    "Surprise": 6
 }
 class MultimodalMELDDataset(Dataset):
     def __init__(self, data_dir):
@@ -249,15 +241,8 @@ class MultimodalMELDDataset(Dataset):
         filepath = self.filepaths[idx]
         sample = torch.load(filepath)
         return sample
-# Vision model array to unified label mapping, including "love" and "worry"
-# Vision model labels
-vision_labels = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise", "love", "worry"]
 
-# Map vision model labels to unified label indices
-vision_to_unified = {label: unified_label_mapping[label] for label in vision_labels}
-# Invert the unified label mapping
-tensor_dataset = torch.load(r"E:\text_datasets\saved\train_emotion_no_batch_no_batch.pt")
-# Adjust the unpacking based on the actual structure of your TensorDataset
+
 
 
 
@@ -286,9 +271,9 @@ classifier = MultimodalClassifier(train_dataset=train_dataset,
                                   text_state_dict=text_dict,
                                   vision_state_dict=vision_dict,
                                   audio_state_dict=speech_dict,
-                                  audio_label_map=speech_to_unified,
+                                  audio_label_map=speech_label_mapping,
                                   text_label_map=text_label_mapping,
-                                  vision_label_map=vision_to_unified,
+                                  vision_label_map=vision_label_mapping,
                                   unified_label_map = unified_label_mapping)
 
 classifier.train(epochs=10)
